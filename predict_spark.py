@@ -2,8 +2,9 @@ import os
 from datetime import date
 from pyspark.sql import SparkSession
 from pyspark.ml import Pipeline
-from pyspark.ml.feature import OneHotEncoder, StringIndexer
+from pyspark.ml.feature import OneHotEncoder, StringIndexer, VectorAssembler
 from pyspark.ml.classification import LogisticRegression
+
 
 if __name__ == '__main__':
     spark = SparkSession.builder \
@@ -14,18 +15,27 @@ if __name__ == '__main__':
     base_dir = '/home/william/Projects/flight-delay/data/parquet'
     flights_df = spark.read.parquet(os.path.join(base_dir, 'flights.parquet'))
 
-    # encode the categorical variables
-    str_cat_cols = ['Carrier', 'Origin', 'Dest']
+    # categorical columns that will be OneHotEncoded
+    cat_cols = ['Month', 'Day', 'Dow', 'Hour', 'Carrier']
+    # numeric columns that will be a part of features used for prediction
+    non_cat_cols = ['Delay', 'Distance', 'NearestHoliday']
     # StringIndexer does not have multiple col support yet (PR #9183 )
-    indexers = [ StringIndexer(inputCol=col, outputCol=col+'_index').fit(flights_df)
-                 for col in str_cat_cols ]
-    str_ixer_pipeline = Pipeline(stages=indexers)
-    flights_df = str_ixer_pipeline.fit(flights_df).transform(flights_df)
+    # Create StringIndexer for each categorical feature
+    indexers = [ StringIndexer(inputCol=col, outputCol=col+'_Index')
+                 for col in cat_cols ]
+    # OneHotEncode each categorical feature after being StringIndexed
+    encoders = [ OneHotEncoder(dropLast=False, inputCol=indexer.getOutputCol(),
+                               outputCol=indexer.getOutputCol()+'_Encoded')
+                 for indexer in indexers ]
+    # Assemble all feature columns (numeric + categorical) into `features` col
+    assembler = VectorAssembler(inputCols=[encoder.getOutputCol()
+                                           for encoder in encoders] + non_cat_cols,
+                                outputCol='features')
+    # Create pipeline to process all StringIndex, OneHotEncoder, and assmelber operations
+    pipeline = Pipeline(stages=[ *indexers, *encoders, assembler ] )
+    flights_df = pipeline.fit(flights_df) \
+                    .transform(flights_df)
 
-    flights_df.show(10)
-
-    numeric_cats = ['Month', 'Day', 'Dow', 'Hour', 'HDays']
-
-    #lr = LogisticRegression(maxIter=10, regParam=0.3, elasticNetParam=0.8)
-    #lr_model = lr.fit(flights_df)
-    print("Total rows: ", flights_df.count())
+    flights_df \
+        .select( *(cat_cols + non_cat_cols + ['features']) ) \
+        .show(10)
