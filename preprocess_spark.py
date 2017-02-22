@@ -29,22 +29,20 @@ def daterange(start_date, end_date):
 hday_lookup = {}
 for d in daterange( date(2015, 1, 1), date(2017, 1, 1) ):
     holidays = holidays_2015 if d.year == 2015 else holidays_2016
-    hday_lookup[d] = min( (abs(d- holiday).days for holiday in holidays) )
+    hday_lookup[d] = min( (float(abs(d- holiday).days) for holiday in holidays) )
 
 def nearest_holiday(year, month, day):
-    d = date(year, month, day)
+    d = date(int(year), int(month), int(day))
     return hday_lookup[d]
 
 # add a boolean column that indicates whether flight delayed or not (threshold 15 mins)
-was_delayed_udf = udf(lambda x: x >= 15, BooleanType())
+was_delayed_udf = udf(lambda x: float(x >= 15), DoubleType())
 
 # convert hours, e.g. 1430 --> 14
-get_hour_udf = udf(lambda x: x // 100, IntegerType())
+get_hour_udf = udf(lambda x: float(x // 100), DoubleType())
 
 # add column that indicates how close a flight is to a holiday
-nearest_holiday_udf = udf(nearest_holiday, IntegerType())
-
-
+nearest_holiday_udf = udf(nearest_holiday, DoubleType())
 
 
 if __name__ == "__main__":
@@ -63,12 +61,12 @@ if __name__ == "__main__":
     # must be manually cast (due to the way the DOT stores the data)
     flight_data = flight_data \
         .withColumn('Year', flight_data['Year'].cast('int')) \
-        .withColumn('Month', flight_data['Month'].cast('int')) \
-        .withColumn('Day', flight_data['Day'].cast('int')) \
-        .withColumn('CRSDepTime', flight_data['CRSDepTime'].cast('int')) \
-        .withColumn('Dow', flight_data['Dow'].cast('int')) \
-        .withColumn('DepTime', flight_data['DepTime'].cast('int')) \
-        .withColumn('DepDelay', flight_data['DepDelay'].cast('int')) \
+        .withColumn('Month', flight_data['Month'].cast('Double')) \
+        .withColumn('Day', flight_data['Day'].cast('Double')) \
+        .withColumn('CRSDepTime', flight_data['CRSDepTime'].cast('Double')) \
+        .withColumn('Dow', flight_data['Dow'].cast('Double')) \
+        .withColumn('DepTime', flight_data['DepTime'].cast('Double')) \
+        .withColumn('DepDelay', flight_data['DepDelay'].cast('Double')) \
         .withColumn('TaxiOut', flight_data['TaxiOut'].cast('int')) \
         .withColumn('TaxiIn', flight_data['TaxiIn'].cast('int')) \
         .withColumn('CRSArrTime', flight_data['CRSArrTime'].cast('int')) \
@@ -79,7 +77,7 @@ if __name__ == "__main__":
         .withColumn('CRSElapsedTime', flight_data['CRSElapsedTime'].cast('int')) \
         .withColumn('ActualElapsedTime', flight_data['ActualElapsedTime'].cast('int')) \
         .withColumn('AirTime', flight_data['AirTime'].cast('int')) \
-        .withColumn('Distance', flight_data['Distance'].cast('int')) \
+        .withColumn('Distance', flight_data['Distance'].cast('Double')) \
         .withColumn('CarrierDelay', flight_data['CarrierDelay'].cast('int')) \
         .withColumn('WeatherDelay', flight_data['WeatherDelay'].cast('int')) \
         .withColumn('NASDelay', flight_data['NASDelay'].cast('int')) \
@@ -93,6 +91,7 @@ if __name__ == "__main__":
 
     # add new udf computed columns
     flight_data = flight_data \
+        .withColumn('Delayed', was_delayed_udf(flight_data['DepDelay'])) \
         .withColumn('CRSDepTime', get_hour_udf(flight_data['CRSDepTime'])) \
         .withColumn('HDays', nearest_holiday_udf(flight_data['Year'],
                                                  flight_data['Month'],
@@ -100,7 +99,7 @@ if __name__ == "__main__":
 
     # columns used in the predictive models
     cols = ['DepDelay', 'Month', 'Day', 'Dow', 'CRSDepTime', 'Distance', 'Carrier',
-            'Origin', 'Dest', 'HDays']
+            'Origin', 'Dest', 'HDays', 'Delayed']
 
     # rename columns
     flights = flight_data \
@@ -108,6 +107,8 @@ if __name__ == "__main__":
         .withColumnRenamed('DepDelay', 'Delay') \
         .withColumnRenamed('CRSDepTime', 'Hour')
 
+    print("Table before storing")
+    flights.show(5)
 
     base_data_path = '/home/william/Projects/flight-delay/data'
     if not os.path.exists(os.path.join(base_data_path, 'parquet')):
